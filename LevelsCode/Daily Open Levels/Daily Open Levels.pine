@@ -8,7 +8,7 @@ grpStyle = "Style"
 openTF     = input.timeframe("D", "Open Timeframe", group=grpMain, tooltip="D = daily open. Use W for weekly open, etc.")
 step       = input.float(25.0, "Step (points)", minval=0.0001, step=1.0, group=grpMain, tooltip="Distance between levels in price units. 25 gives 25/50/75/100/125/150.")
 showLabels = input.bool(true, "Show Labels", group=grpStyle)
-lineWidth  = input.int(1, "Line Width", minval=1, maxval=4, group=grpStyle)
+lineWidth  = input.int(1, "Line Width", minval=1, maxval=5, group=grpStyle)
 
 openCol  = input.color(color.new(color.blue, 0),  "Open Line",    group=grpStyle)
 upCol    = input.color(color.new(color.green, 0), "Levels Above", group=grpStyle)
@@ -31,7 +31,7 @@ if newPeriod
     for i = -6 to 6
         float lvl = openPrice + i * step
         color  c  = i == 0 ? openCol : (i > 0 ? upCol : downCol)
-        int    w  = i == 0 ? lineWidth + 1 : lineWidth
+        int    w  = i == 0 ? lineWidth + 1 : (math.abs(i) == 4 or math.abs(i) == 6 ? lineWidth + 1 : lineWidth)
         string st = i == 0 ? line.style_solid : (math.abs(i) == 4 or math.abs(i) == 6 ? line.style_solid : line.style_dashed)
         lines.push(line.new(bar_index, lvl, bar_index + 1, lvl, color=c, width=w, style=st))
         if showLabels

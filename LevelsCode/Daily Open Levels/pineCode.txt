@@ -1,0 +1,14 @@
+Create a Pine Script v6 indicator (overlay) for TradingView.
+
+1. Get the daily open price (resets each new day; timeframe input, default "D").
+2. Draw a horizontal line at the open (blue, thicker).
+3. Draw lines ABOVE the open at +25, +50, +75, +100, +125, +150 points (green).
+4. Draw lines BELOW the open at -25, -50, -75, -100, -125, -150 points (red).
+5. Step size is an input (default 25 points, "p" = price points, not percent).
+6. Label each line (e.g. "+25p", "-100p", "Open 1234.50"), with a show/hide option.
+7. Lines start at the day's first bar and extend to the latest bar; a new set is drawn each day.
+8. Line width input (default 2, max 5). Open, +/-100 and +/-150 lines are thicker and solid; the rest are dashed.
+9. Colour inputs for open, above and below lines.
+10. Alert conditions: price crossing the open, +/-100p and +/-150p.
+
+
