@@ -1,0 +1,54 @@
+//@version=6
+indicator("Daily Open Levels", shorttitle="Open Levels", overlay=true, max_lines_count=500, max_labels_count=500)
+
+// ─────────────────────────── Inputs ───────────────────────────
+grpMain = "Main"
+grpStyle = "Style"
+
+openTF     = input.timeframe("D", "Open Timeframe", group=grpMain, tooltip="D = daily open. Use W for weekly open, etc.")
+step       = input.float(25.0, "Step (points)", minval=0.0001, step=1.0, group=grpMain, tooltip="Distance between levels in price units. 25 gives 25/50/75/100/125/150.")
+showLabels = input.bool(true, "Show Labels", group=grpStyle)
+lineWidth  = input.int(1, "Line Width", minval=1, maxval=4, group=grpStyle)
+
+openCol  = input.color(color.new(color.blue, 0),  "Open Line",    group=grpStyle)
+upCol    = input.color(color.new(color.green, 0), "Levels Above", group=grpStyle)
+downCol  = input.color(color.new(color.red, 0),   "Levels Below", group=grpStyle)
+
+// ─────────────────────────── Open price ───────────────────────────
+newPeriod = timeframe.change(openTF)
+
+var float openPrice = na
+if newPeriod
+    openPrice := open
+
+// ─────────────────────────── Drawings ───────────────────────────
+var array<line>  lines  = array.new<line>()
+var array<label> labels = array.new<label>()
+
+if newPeriod
+    lines.clear()
+    labels.clear()
+    for i = -6 to 6
+        float lvl = openPrice + i * step
+        color  c  = i == 0 ? openCol : (i > 0 ? upCol : downCol)
+        int    w  = i == 0 ? lineWidth + 1 : lineWidth
+        string st = i == 0 ? line.style_solid : (math.abs(i) == 4 or math.abs(i) == 6 ? line.style_solid : line.style_dashed)
+        lines.push(line.new(bar_index, lvl, bar_index + 1, lvl, color=c, width=w, style=st))
+        if showLabels
+            string txt = i == 0 ? "Open " + str.tostring(openPrice, format.mintick) : (i > 0 ? "+" : "") + str.tostring(i * step, "#.##") + "p"
+            labels.push(label.new(bar_index, lvl, txt, style=label.style_label_left, color=color.new(c, 100), textcolor=c, size=size.small))
+
+// Extend the current period's lines/labels to the latest bar
+if not na(openPrice)
+    for ln in lines
+        ln.set_x2(bar_index)
+    for lb in labels
+        lb.set_x(bar_index)
+
+// ─────────────────────────── Alerts ───────────────────────────
+alertcondition(ta.crossover(close, openPrice),  "Cross above Open", "Price crossed ABOVE the open")
+alertcondition(ta.crossunder(close, openPrice), "Cross below Open", "Price crossed BELOW the open")
+alertcondition(ta.crossover(close, openPrice + 4 * step),  "Cross above +100p", "Price crossed above +100p")
+alertcondition(ta.crossunder(close, openPrice - 4 * step), "Cross below -100p", "Price crossed below -100p")
+alertcondition(ta.crossover(close, openPrice + 6 * step),  "Cross above +150p", "Price crossed above +150p")
+alertcondition(ta.crossunder(close, openPrice - 6 * step), "Cross below -150p", "Price crossed below -150p")
