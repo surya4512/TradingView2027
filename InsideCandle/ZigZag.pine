@@ -1,0 +1,90 @@
+//@version=5
+indicator("Open → High → Low → High ... → Present Candle", shorttitle="OHL Zigzag", overlay=true, max_lines_count=500, max_labels_count=500)
+
+// ───────────── Inputs ─────────────
+grpStart = "Start Point"
+startMode = input.string("Lookback bars", "Start from open of", options=["Lookback bars", "Day open"], group=grpStart)
+lookback  = input.int(300, "Lookback bars (if 'Lookback bars')", minval=10, group=grpStart)
+
+grpSwing = "Swing Detection"
+left  = input.int(5, "Pivot left bars",  minval=1, group=grpSwing, tooltip="Bigger numbers = only bigger swings are marked.")
+right = input.int(5, "Pivot right bars", minval=1, group=grpSwing, tooltip="A swing is confirmed after this many bars. Smaller = faster but more noise.")
+
+grpVis = "Display"
+colUp   = input.color(color.new(color.green, 0), "Up-leg color",   group=grpVis)
+colDn   = input.color(color.new(color.red, 0),   "Down-leg color", group=grpVis)
+lineW   = input.int(2, "Line width", minval=1, maxval=5, group=grpVis)
+showLbl = input.bool(true, "Show High / Low price labels", group=grpVis)
+
+// ───────────── Storage for alternating swing points ─────────────
+var array<int>   pIdx = array.new_int()
+var array<float> pPx  = array.new_float()
+var array<int>   pTp  = array.new_int()      // 1 = swing high, -1 = swing low
+var array<line>  lines  = array.new_line()
+var array<label> labels = array.new_label()
+var int dayStart = 0
+
+addPivot(int idx, float px, int tp) =>
+    int n = array.size(pIdx)
+    if n == 0
+        array.push(pIdx, idx)
+        array.push(pPx, px)
+        array.push(pTp, tp)
+    else
+        int lastTp = array.get(pTp, n - 1)
+        if lastTp == tp
+            // same type twice in a row: keep only the more extreme one
+            float lastPx = array.get(pPx, n - 1)
+            if (tp == 1 and px > lastPx) or (tp == -1 and px < lastPx)
+                array.set(pIdx, n - 1, idx)
+                array.set(pPx, n - 1, px)
+        else
+            array.push(pIdx, idx)
+            array.push(pPx, px)
+            array.push(pTp, tp)
+    if array.size(pIdx) > 400
+        array.shift(pIdx)
+        array.shift(pPx)
+        array.shift(pTp)
+
+// ───────────── Detect swings ─────────────
+ph = ta.pivothigh(high, left, right)
+pl = ta.pivotlow(low, left, right)
+
+if timeframe.change("D")
+    dayStart := bar_index
+
+if not na(pl)
+    addPivot(bar_index - right, pl, -1)
+if not na(ph)
+    addPivot(bar_index - right, ph, 1)
+
+// ───────────── Draw (latest bar only) ─────────────
+if barstate.islast
+    for ln in lines
+        line.delete(ln)
+    array.clear(lines)
+    for lb in labels
+        label.delete(lb)
+    array.clear(labels)
+
+    int sIdx = startMode == "Day open" ? dayStart : math.max(0, bar_index - lookback + 1)
+    int   pX = sIdx
+    float pY = open[bar_index - sIdx]          // first point = the OPEN of the start candle
+
+    int nPiv = array.size(pIdx)
+    for k = 0 to math.max(nPiv - 1, 0)
+        int x = nPiv > 0 ? array.get(pIdx, k) : sIdx
+        if nPiv > 0 and x > sIdx
+            float y = array.get(pPx, k)
+            int   t = array.get(pTp, k)
+            array.push(lines, line.new(pX, pY, x, y, xloc=xloc.bar_index, color=(y >= pY ? colUp : colDn), width=lineW))
+            if showLbl
+                array.push(labels, label.new(x, y, (t == 1 ? "H " : "L ") + str.tostring(y, format.mintick),
+                     style=(t == 1 ? label.style_label_down : label.style_label_up),
+                     color=(t == 1 ? colDn : colUp), textcolor=color.white, size=size.tiny))
+            pX := x
+            pY := y
+
+    // last leg: from the latest swing to the present candle
+    array.push(lines, line.new(pX, pY, bar_index, close, xloc=xloc.bar_index, color=(close >= pY ? colUp : colDn), width=lineW))

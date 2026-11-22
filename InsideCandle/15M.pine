@@ -1,0 +1,168 @@
+//@version=6
+strategy("Master-Setup-Trigger (15m)", overlay=true,
+     process_orders_on_close=true,
+     default_qty_type=strategy.fixed, default_qty_value=1,
+     initial_capital=100000,
+     max_boxes_count=500, max_lines_count=500, max_labels_count=500)
+
+// ───────────────────────── Inputs ─────────────────────────
+grpRule = "Pattern rules"
+enBuy       = input.bool(true, "Enable Buy setups", group=grpRule)
+enSell      = input.bool(true, "Enable Sell setups", group=grpRule)
+setupLvlIn  = input.string("Close", "Setup must close beyond Master's", options=["Close", "Open", "Extreme"], group=grpRule,
+     tooltip="Close/Open = Master close/open. Extreme = Master high for Buy, Master low for Sell.")
+trigLvlIn   = input.string("Extreme", "Trigger must close beyond Master's", options=["Extreme", "Close", "Open"], group=grpRule,
+     tooltip="Extreme = Master high for Buy, Master low for Sell.")
+insideRule  = input.bool(true, "Setup must stay inside Master range", group=grpRule,
+     tooltip="Buy: Setup high must not exceed Master high. Sell: Setup low must not go below Master low.")
+minBody     = input.float(1.0, "Min Master body height (points)", minval=0.0, step=0.1, group=grpRule,
+     tooltip="Master body = |close - open|, in price points. Candles with a smaller body are ignored as Master.")
+maxMaster   = input.float(15.0, "Max Master height (points)", minval=0.0, step=0.1, group=grpRule,
+     tooltip="Master candles taller than this are ignored. Set 0 to disable.")
+maxMeasure  = input.string("Body", "Max height measured as", options=["Body", "Full range"], group=grpRule,
+     tooltip="Body = |close - open|. Full range = high - low (wicks included).")
+maxWick     = input.float(3.0, "Max Master wick (points)", minval=0.0, step=0.1, group=grpRule,
+     tooltip="Buy (red Master): top wick, high - open, must not exceed this. Sell (green Master): mirror, bottom wick, open - low. Set 0 to disable.")
+waitBars    = input.int(1, "Trigger window (candles after Setup)", minval=1, group=grpRule)
+
+grpRsi = "RSI filter"
+useRsi      = input.bool(true, "Use RSI filter", group=grpRsi,
+     tooltip="Buy needs RSI above the level at the Trigger close. Sell needs RSI below it (mirror).")
+rsiTf       = input.timeframe("15", "RSI timeframe", group=grpRsi)
+rsiLen      = input.int(14, "RSI length", minval=1, group=grpRsi)
+rsiLevel    = input.float(50.0, "RSI level", group=grpRsi)
+
+grpRisk = "Risk"
+rr          = input.float(2.0, "Risk:Reward", minval=0.1, step=0.1, group=grpRisk)
+slTicks     = input.float(0.0, "Stop buffer (ticks)", minval=0.0, group=grpRisk)
+qty         = input.float(1.0, "Quantity", minval=0.0001, group=grpRisk)
+
+grpViz = "Visuals"
+showViz     = input.bool(true, "Show zones, levels and markers", group=grpViz)
+zoneLen     = input.int(15, "Zone length (bars)", minval=1, group=grpViz)
+
+// ───────────────────────── Helpers ─────────────────────────
+f_lvl(string kind, bool isBuy, float o, float h, float l, float c) =>
+    kind == "Close" ? c : kind == "Open" ? o : (isBuy ? h : l)
+
+// ───────────────────────── State ─────────────────────────
+var int   state    = 0      // 0 idle, 1 master found, 2 setup found (waiting trigger)
+var int   dir      = 0      // 1 buy, -1 sell
+var int   mBar     = na
+var float mO       = na
+var float mH       = na
+var float mL       = na
+var float mC       = na
+var float pHi      = na     // highest high of pattern
+var float pLo      = na     // lowest low of pattern
+var float trigLvl  = na
+var int   waitLeft = 0
+
+float rsiVal  = request.security(syminfo.tickerid, rsiTf, ta.rsi(close, rsiLen))
+float slBuf   = slTicks * syminfo.mintick
+float mHeight = maxMeasure == "Body" ? math.abs(close - open) : high - low
+bool  bodyOk  = math.abs(close - open) >= minBody and (maxMaster <= 0 or mHeight <= maxMaster)
+float topWick = high - math.max(open, close)
+float botWick = math.min(open, close) - low
+bool  isRed   = close < open and bodyOk and (maxWick <= 0 or topWick <= maxWick)
+bool  isGreen = close > open and bodyOk and (maxWick <= 0 or botWick <= maxWick)
+bool  handled = false
+
+// ───────────────────────── Logic ─────────────────────────
+if state == 2
+    // Waiting for trigger: pattern extremes include the trigger candle
+    pHi := math.max(pHi, high)
+    pLo := math.min(pLo, low)
+    bool rsiOk = not useRsi or (dir == 1 ? rsiVal > rsiLevel : rsiVal < rsiLevel)
+    bool trig = (dir == 1 ? close > trigLvl : close < trigLvl) and rsiOk
+
+    if trig
+        handled := true
+        state := 0
+        float entry = close
+        float sl    = dir == 1 ? pLo - slBuf : pHi + slBuf
+        float risk  = math.abs(entry - sl)
+        float tp    = dir == 1 ? entry + risk * rr : entry - risk * rr
+
+        if strategy.position_size == 0 and risk > 0
+            if dir == 1
+                strategy.entry("Long", strategy.long, qty=qty)
+                strategy.exit("Long Exit", "Long", stop=sl, limit=tp)
+            else
+                strategy.entry("Short", strategy.short, qty=qty)
+                strategy.exit("Short Exit", "Short", stop=sl, limit=tp)
+
+            alert((dir == 1 ? "BUY" : "SELL") + " " + syminfo.ticker +
+                 " | Entry " + str.tostring(entry, format.mintick) +
+                 " | SL " + str.tostring(sl, format.mintick) +
+                 " | TP " + str.tostring(tp, format.mintick),
+                 alert.freq_once_per_bar_close)
+
+            if showViz
+                box.new(bar_index, entry, bar_index + zoneLen, sl, xloc=xloc.bar_index,
+                     border_color=na, bgcolor=color.new(color.red, 85))
+                box.new(bar_index, tp, bar_index + zoneLen, entry, xloc=xloc.bar_index,
+                     border_color=na, bgcolor=color.new(color.green, 85))
+                line.new(mBar, trigLvl, bar_index, trigLvl, xloc=xloc.bar_index,
+                     color=color.orange, style=line.style_dashed)
+                label.new(bar_index, dir == 1 ? low : high, dir == 1 ? "BUY" : "SELL",
+                     xloc=xloc.bar_index, yloc=yloc.price,
+                     style=dir == 1 ? label.style_label_up : label.style_label_down,
+                     color=dir == 1 ? color.green : color.red, textcolor=color.white)
+    else
+        waitLeft := waitLeft - 1
+        if waitLeft <= 0
+            state := 0
+            if showViz
+                label.new(bar_index, dir == 1 ? low : high, "X",
+                     xloc=xloc.bar_index, yloc=yloc.price,
+                     style=dir == 1 ? label.style_label_up : label.style_label_down,
+                     color=color.gray, textcolor=color.white, size=size.small)
+
+else if state == 1
+    // Current candle is the Setup candidate
+    float sLvl = f_lvl(setupLvlIn, dir == 1, mO, mH, mL, mC)
+    bool ok = dir == 1 ?
+         (low < mL and close > sLvl and (not insideRule or high <= mH)) :
+         (high > mH and close < sLvl and (not insideRule or low >= mL))
+
+    if ok
+        handled := true
+        state := 2
+        waitLeft := waitBars
+        pHi := math.max(mH, high)
+        pLo := math.min(mL, low)
+        trigLvl := f_lvl(trigLvlIn, dir == 1, mO, mH, mL, mC)
+        if showViz
+            label.new(mBar, dir == 1 ? mL : mH, "M", xloc=xloc.bar_index, yloc=yloc.price,
+                 style=dir == 1 ? label.style_label_up : label.style_label_down,
+                 color=color.new(color.blue, 20), textcolor=color.white, size=size.small)
+            label.new(bar_index, dir == 1 ? low : high, "S", xloc=xloc.bar_index, yloc=yloc.price,
+                 style=dir == 1 ? label.style_label_up : label.style_label_down,
+                 color=color.new(color.purple, 20), textcolor=color.white, size=size.small)
+    else
+        state := 0
+
+// Look for a new Master candle (also right after a failed Setup or cancelled window)
+if state == 0 and not handled
+    if isRed and enBuy
+        state := 1
+        dir := 1
+        mBar := bar_index
+        mO := open
+        mH := high
+        mL := low
+        mC := close
+    else if isGreen and enSell
+        state := 1
+        dir := -1
+        mBar := bar_index
+        mO := open
+        mH := high
+        mL := low
+        mC := close
+
+
+
+
+        
